@@ -1,5 +1,5 @@
 # 🤗 hf-proxy
-A cloudflare workers proxy for huggingface especially for Chinese users.
+A cloudflare workers proxy for Huggingface, especially to Chinese users.
 
 ### 食用指南
 
