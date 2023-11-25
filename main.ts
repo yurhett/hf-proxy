@@ -1,5 +1,5 @@
 const target = 'https://huggingface.co'
-const cdn_target = 'https://cdn-lfs-us-1.huggingface.co'
+const cdn_target = 'https://cdn-lfs'
 const cdn_proxy = '<your cdn-lfs proxy address>'
 const allowMethods = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE']
 
@@ -37,9 +37,13 @@ async function handleRequest(request) {
     const location = response.headers.get('Location')
     if (location && location.startsWith(cdn_target)) {
       response = new Response(response.body, response)
+      const locationArray = location.split(".");
+      const subdomain = locationArray[0].replace("https://", "");
+      const newLocation = `${cdn_proxy}/${subdomain}`;
+      const realDomain = `https://${subdomain}.huggingface.co`
       response.headers.set(
         'Location',
-        location.replace(cdn_target, cdn_proxy)
+        location.replace(realDomain, newLocation)
       )
     }
   }
