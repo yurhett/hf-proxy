@@ -496,7 +496,7 @@
     reflare.push({
       path: "/*",
       upstream: {
-        domain: "cdn-lfs.huggingface.co",
+        domain: "cdn-lfs-us-1.huggingface.co",
         protocol: "https",
         onResponse: (response, url) => {
           return response;
