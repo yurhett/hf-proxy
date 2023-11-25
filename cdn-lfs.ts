@@ -490,21 +490,37 @@
   };
   var src_default = useReflare;
 
+
   // src/index.ts
   var handleRequest = async (request) => {
     const reflare = await src_default();
+    const requestUrl = request.url;
+    const urlObj = new URL(requestUrl);
+    const pathname = urlObj.pathname;
+    const pathArray = pathname.split("/");
+    const path = pathArray.find((element) => element !== "");
+    const domain = `${path}.huggingface.co`;
+    pathArray.shift();
+    pathArray.shift();
+    urlObj.pathname = pathArray.join("/")
+    const newURL = urlObj.toString();
+    const newRequest = new Request(newURL, request);
+    console.log(newURL);
+    console.log(newRequest);
+    console.log(domain);
     reflare.push({
       path: "/*",
       upstream: {
-        domain: "cdn-lfs-us-1.huggingface.co",
+        domain: domain,
         protocol: "https",
         onResponse: (response, url) => {
           return response;
-        }
+        },
       },
     });
-    return reflare.handle(request);
+    return reflare.handle(newRequest);
   };
+  
   addEventListener("fetch", (event) => {
     event.respondWith(handleRequest(event.request));
   });
