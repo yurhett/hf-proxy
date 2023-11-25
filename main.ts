@@ -1,5 +1,5 @@
 const target = 'https://huggingface.co'
-const cdn_target = 'https://cdn-lfs.huggingface.co'
+const cdn_target = 'https://cdn-lfs-us-1.huggingface.co'
 const cdn_proxy = '<your cdn-lfs proxy address>'
 const allowMethods = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE']
 
