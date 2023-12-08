@@ -4,6 +4,8 @@ A cloudflare workers proxy for Huggingface, especially to Chinese users.
 
 - 20231125
   - huggingface的cdn地址发生变化
+- 20231208
+  - 支持多种CDN
 
 ### 食用指南
 
