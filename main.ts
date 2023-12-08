@@ -1,6 +1,8 @@
 const target = 'https://huggingface.co'
 const cdn_target = 'https://cdn-lfs'
 const cdn_proxy = '<your cdn-lfs proxy address>'
+var s3_proxy = ''
+
 const allowMethods = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE']
 
 const allowHeaders = [
@@ -11,6 +13,7 @@ const allowHeaders = [
   'Origin',
   'User-Agent',
 ]
+
 
 const exposeHeaders = [
   'Content-Length',
@@ -33,6 +36,7 @@ async function handleRequest(request) {
 
   let response = await fetch(proxyRequest)
 
+
   if (response.status === 302) {
     const location = response.headers.get('Location')
     if (location && location.startsWith(cdn_target)) {
@@ -46,6 +50,16 @@ async function handleRequest(request) {
         location.replace(realDomain, newLocation)
       )
     }
+  }
+  let contentType = response.headers.get('content-type')
+  if (contentType && (contentType.includes('text') || contentType.includes('json'))) {
+    let text = await response.text()
+    let domain = new URL(request.url).hostname
+    text = text.replace(/https:\/\/huggingface\.co/g, 'https://' + domain)
+    if (s3_proxy != ""){
+      text = text.replace(/https:\/\/s3\.amazonaws\.com/g, s3_proxy)
+    }
+    response = new Response(text, response)
   }
 
   const proxyResponse = new Response(response.body, response)
@@ -69,3 +83,4 @@ async function handleRequest(request) {
 addEventListener('fetch', (event) => {
   event.respondWith(handleRequest(event.request))
 })
+
