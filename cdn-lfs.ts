@@ -505,9 +505,6 @@
     urlObj.pathname = pathArray.join("/")
     const newURL = urlObj.toString();
     const newRequest = new Request(newURL, request);
-    console.log(newURL);
-    console.log(newRequest);
-    console.log(domain);
     reflare.push({
       path: "/*",
       upstream: {
