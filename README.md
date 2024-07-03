@@ -18,9 +18,9 @@
   - Cloudflare账号（免费）
   - 域名一个（免费不免费看你水平），绑定到Cloudflare
   - 手和脑子（一点点即可）
-- 新建一个Workers，拷贝workers/cdn-lfs.ts中的内容，粘贴进代码编辑中。
+- 新建一个Workers，拷贝`workers/cdn-lfs.ts`中的内容，粘贴进代码编辑中。
 - 绑定一个触发器，内容写你自定义的子域名A。
-- 再新建一个Workers，拷贝main.ts中的内容，粘贴进去，在代码最开始的地方，有一个`<your cdn-lfs proxy address>`，将你上一步绑定的域名A填进去，***注意，`https://` 开头不能少，最后也不要有`/` 。***
+- 再新建一个Workers，拷贝`workers/main.ts`中的内容，粘贴进去，在代码最开始的地方，有一个`<your cdn-lfs proxy address>`，将你上一步绑定的域名A填进去，***注意，`https://` 开头不能少，最后也不要有`/` 。***
 - 绑定一个触发器，内容写你自定义的子域名B。
 - 最后，设置一个环境变量在需要使用huggingface的环境里：
   - `HF_ENDPOINT = https://子域名B`
@@ -35,7 +35,7 @@
 - 新建一个Pages，将pages/hfcdn文件夹直接拖拽到Pages代码上传框。
 - 绑定一个自定义域名，内容写你自定义的子域名A，并按提示完成绑定操作。
 - 修改`pages/hf/_worker.js`。在代码最开始的地方，有一个`<your cdn-lfs proxy address>`，将你上一步绑定的域名A填进去，***注意，`https://` 开头不能少，最后也不要有`/` 。***
-- 再新建一个Pages，将pages文件夹直接拖拽到Pages代码上传框。
+- 再新建一个Pages，将`pages/hf`文件夹直接拖拽到Pages代码上传框。
 - 绑定一个自定义域名，内容写你自定义的子域名B，并按提示完成绑定操作。
 - 最后，设置一个环境变量在需要使用huggingface的环境里：
   - `HF_ENDPOINT = https://子域名B`
