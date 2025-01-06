@@ -35,7 +35,7 @@
 1. 登录 Cloudflare Workers 控制台，新建一个 Worker。
 2. 将代码库中 `src/_worker.js` 的内容复制到 Workers 编辑器中。
 3. 保存代码。
-4. 绑定触发器，设置你自定义的子域名（如 `hf.yourdomain.com`）。
+4. 在设置-域和路由里添加你的自定义域名（如 `hf.yourdomain.com`）。
 5. **设置环境变量**：
    
    - 在需要使用 Huggingface 的环境中，添加如下配置：
