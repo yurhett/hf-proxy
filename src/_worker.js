@@ -2,7 +2,9 @@
 
 const target = 'https://huggingface.co';
 const cdn_target = 'https://cdn-lfs';
+const xet_target = 'https://cas-bridge.xethub.hf.co';
 const lfs_endpoint = '/hf-cdn-lfs';
+const xet_endpoint = '/hf-xet';
 const proxy_endpoint = '/static-proxy';
 
 
@@ -125,12 +127,23 @@ async function proxyRequest(request, targetUrl) {
   // 处理重定向响应，将 Location 重写为新的路径格式
   if (response.status === 302) {
     const location = response.headers.get('Location');
-    if (location && location.startsWith(cdn_target)) {
-      // 提取子域名和路径
-      const fullPath = location.slice('https://'.length); 
-      const newLocation = `https://${request.headers.get('host')}${lfs_endpoint}/${fullPath}`; 
+    if (location) {
       const modifiedHeaders = new Headers(response.headers);
-      modifiedHeaders.set('Location', newLocation);
+      
+      if (location.startsWith(cdn_target)) {
+        // LFS URL处理
+        const fullPath = location.slice('https://'.length); 
+        const newLocation = `https://${request.headers.get('host')}${lfs_endpoint}/${fullPath}`; 
+        modifiedHeaders.set('Location', newLocation);
+      } else if (location.startsWith(xet_target)) {
+        // XET URL处理
+        const host = request.headers.get('host');
+        // 将完整的xet URL编码并通过xet_endpoint代理
+        const xetPath = location.slice(xet_target.length);
+        const newLocation = `https://${host}${xet_endpoint}${xetPath}`;
+        modifiedHeaders.set('Location', newLocation);
+      }
+      
       response = new Response(response.body, {
         status: response.status,
         statusText: response.statusText,
@@ -154,24 +167,30 @@ async function handleRequest(request) {
       headers: { 'Content-Type': 'text/html; charset=UTF-8' },
     });
   }
+  
+  // 处理代理请求
   if (url.pathname === proxy_endpoint) {
     const targetUrl = url.searchParams.get('url');
     if (!targetUrl) {
       return new Response('Missing "url" parameter in /proxy request', { status: 400 });
     }
+    if (!targetUrl.includes("huggingface.co")){
+      return new Response('Not Allowed', { status: 400 });
+    }
     return proxyRequest(request, targetUrl);
   }
-  // 处理新的 /proxy/cdn-lfs-xxx 请求
+  
+  // 处理LFS请求
   if (url.pathname.startsWith(lfs_endpoint)) {
     const targetPath = url.pathname.slice(lfs_endpoint.length + 1); // 去掉 /proxy/
     if (!targetPath) {
-      return new Response('Missing target path in /proxy request', { status: 400 });
+      return new Response('Missing target path in lfs request', { status: 400 });
     }
 
     // 提取子域名和路径
     const firstSlashIndex = targetPath.indexOf('/');
     if (firstSlashIndex === -1) {
-      return new Response('Invalid target path in /proxy request', { status: 400 });
+      return new Response('Invalid target path in lfs request', { status: 400 });
     }
 
     const subdomain = targetPath.slice(0, firstSlashIndex); // 提取 cdn-lfs-xxx 部分
@@ -181,6 +200,15 @@ async function handleRequest(request) {
     const query = url.search; // 保留原始查询参数
     const targetUrl = `https://${subdomain}${path}${query}`; // 构造完整目标 URL
 
+    return proxyRequest(request, targetUrl);
+  }
+  
+  // 处理XET请求
+  if (url.pathname.startsWith(xet_endpoint)) {
+    const path = url.pathname.slice(xet_endpoint.length); // 提取XET路径部分
+    const query = url.search; // 保留原始查询参数
+    const targetUrl = `${xet_target}${path}${query}`; // 构造完整XET目标URL
+    
     return proxyRequest(request, targetUrl);
   }
 
