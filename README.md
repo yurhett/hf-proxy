@@ -5,7 +5,8 @@
 ---
 
 ## 更新日志
-
+- 2025-05-09
+  - 支持Huggingface xet
 - 2024-12-02
   - 优化部署流程，仅需一个域名即可完成配置。 [#4](https://github.com/yurhett/hf-proxy/issues/5)
   - 兼容 Huggingface 最新的 CDN 配置。 [#4](https://github.com/yurhett/hf-proxy/issues/5)
@@ -51,7 +52,6 @@
 
 - **Cloudflare 账号**（免费）
 - **一个域名**（无需绑定到 Cloudflare，支持自定义域名）
-- **本项目源码**
 
 ### 步骤
 
