@@ -95,7 +95,7 @@ async function rewriteResponse(response, request) {
   if (request.url.includes('/resolve/')){
     return response;
   }
-  if (contentType && (contentType.includes('text') || contentType.includes('json'))) {
+  if (contentType && (contentType.includes('text/javascript') || contentType.includes('text/html'))) {
     let text = await response.text();
     const domain = new URL(request.url).hostname;
 
