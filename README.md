@@ -5,8 +5,11 @@
 ---
 
 ## 更新日志
+- 2025-08-23
+  - 修复由于Huggingface API变更导致的Content-Length功能失效问题。[#11](https://github.com/yurhett/hf-proxy/issues/11) [#12](https://github.com/yurhett/hf-proxy/issues/12)
+  - 部分支持Huggingface Spaces (测试) [#10](https://github.com/yurhett/hf-proxy/issues/10)
 - 2025-05-09
-  - 支持Huggingface xet
+  - 支持Huggingface xet (测试)
 - 2024-12-02
   - 优化部署流程，仅需一个域名即可完成配置。 [#4](https://github.com/yurhett/hf-proxy/issues/5)
   - 兼容 Huggingface 最新的 CDN 配置。 [#4](https://github.com/yurhett/hf-proxy/issues/5)
