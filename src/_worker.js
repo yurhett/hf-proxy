@@ -12,7 +12,6 @@ const xet_transfer_endpoint = '/hf-xet-transfer';
 const proxy_endpoint = '/proxy';
 
 
-// ====== 修改部分 1: 更新登录页面，增加表单和交互逻辑 ======
 // 生成 HTML 页面
 function generateCookieLoginPage() {
     return `
@@ -23,7 +22,7 @@ function generateCookieLoginPage() {
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <title>登录提示</title>
       <style>
-        body { /* ... (原有样式保持不变) ... */
+        body {
           display: flex;
           flex-direction: column;
           align-items: center;
@@ -112,12 +111,12 @@ function generateCookieLoginPage() {
           <img alt="Hugging Face's logo" src="/front/assets/huggingface_logo-noborder.svg">
           重要提示
         </h1>
-        <p>为了确保您的账户安全，请通过以下步骤完成登录：</p>
+        <p>为了确保您的账户安全，请通过以下步骤完成登录（如果你不是此网站的管理员，请不要填入任何信息，这可能会导致您的隐私泄露！！！）：</p>
         <ol>
           <li>使用支持 <b>Cookie Editor</b> 的浏览器（如 Chrome）。</li>
           <li>访问 <a href="https://huggingface.co" target="_blank">Hugging Face</a> 并登录您的账户。</li>
           <li>安装并打开浏览器扩展 <a href="https://chrome.google.com/webstore/detail/cookie-editor/hlkenndednhfkekhgcdicdfddnkalmdm?hl=zh-CN&utm_source=ext_sidebar" target="_blank">Cookie Editor</a>。</li>
-          <li>复制 Hugging Face 的全部 Cookie。</li>
+          <li>点击Export -> Header String 复制 Hugging Face 的全部 Cookie。</li>
           <li><b>在下方文本框中粘贴 Cookie，并点击“登录”按钮。</b></li>
         </ol>
         
@@ -181,8 +180,6 @@ function generateCookieLoginPage() {
     </html>
   `;
 }
-// ====== 修改部分 1 结束 ======
-
 
 // 处理响应内容重写
 async function rewriteResponse(response, request, contentLength = null) {
@@ -495,8 +492,6 @@ async function rewriteResponseHeaders(response, request, host) {
 // 主处理逻辑
 async function handleRequest(request) {
     const url = new URL(request.url);
-
-    // ====== 修改部分 2: 新增 /set-cookie 接口处理逻辑 ======
     // 处理设置 Cookie 的请求
     if (url.pathname === '/set-cookie' && request.method === 'POST') {
         try {
