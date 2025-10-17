@@ -27,7 +27,7 @@ function generateCookieLoginPage() {
           flex-direction: column;
           align-items: center;
           justify-content: center;
-          height: 100vh;
+          min-height: 100vh;
           font-family: Arial, sans-serif;
           background-color: #f9f9f9;
           color: #333;
@@ -41,6 +41,7 @@ function generateCookieLoginPage() {
           border-radius: 8px;
           box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
           max-width: 600px;
+          width: 100%;
         }
         h1 {
           color: #d29922;
@@ -52,9 +53,9 @@ function generateCookieLoginPage() {
           justify-content: center;
         }
         h1 img {
-          width: 40px; /* 调整 logo 的宽度 */
+          width: 40px;
           height: auto;
-          margin-right: 10px; /* 添加 logo 和文字的间距 */
+          margin-right: 10px;
         }
         p, ol {
           line-height: 1.6;
@@ -69,6 +70,39 @@ function generateCookieLoginPage() {
         a:hover {
           text-decoration: underline;
         }
+        /* 新增样式 */
+        .cookie-form {
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid #eee;
+        }
+        textarea {
+            width: 100%;
+            height: 100px;
+            box-sizing: border-box;
+            margin-bottom: 10px;
+            padding: 10px;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+            font-family: monospace;
+        }
+        button {
+            background-color: #d29922;
+            color: white;
+            padding: 10px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 1rem;
+        }
+        button:hover {
+            background-color: #b5851c;
+        }
+        #status-message {
+            margin-top: 15px;
+            text-align: center;
+            font-weight: bold;
+        }
       </style>
     </head>
     <body>
@@ -77,21 +111,75 @@ function generateCookieLoginPage() {
           <img alt="Hugging Face's logo" src="/front/assets/huggingface_logo-noborder.svg">
           重要提示
         </h1>
-        <p>为了确保您的账户安全，请通过以下步骤完成登录：</p>
+        <p>为了确保您的账户安全，请通过以下步骤完成登录（如果你不是此网站的管理员，请不要填入任何信息，这可能会导致您的隐私泄露！！！）：</p>
         <ol>
           <li>使用支持 <b>Cookie Editor</b> 的浏览器（如 Chrome）。</li>
           <li>访问 <a href="https://huggingface.co" target="_blank">Hugging Face</a> 并登录您的账户。</li>
           <li>安装并打开浏览器扩展 <a href="https://chrome.google.com/webstore/detail/cookie-editor/hlkenndednhfkekhgcdicdfddnkalmdm?hl=zh-CN&utm_source=ext_sidebar" target="_blank">Cookie Editor</a>。</li>
-          <li>复制 Hugging Face 的全部 Cookie。</li>
-          <li>访问本站并通过 Cookie Editor 粘贴 Cookie 完成登录。</li>
+          <li>点击Export -> Header String 复制 Hugging Face 的全部 Cookie。</li>
+          <li><b>在下方文本框中粘贴 Cookie，并点击“登录”按钮。</b></li>
         </ol>
+        
+        <!-- 新增的表单区域 -->
+        <div class="cookie-form">
+            <form id="cookie-form">
+                <textarea id="cookie-text" name="cookies" placeholder="在此处粘贴从 Cookie Editor 复制的全部 Cookie 内容..."></textarea>
+                <button type="submit">登录</button>
+            </form>
+            <div id="status-message"></div>
+        </div>
+
         <p>更多信息请访问：<a href="https://github.com/yurhett/hf-proxy" target="_blank">GitHub项目地址</a>。</p>
       </div>
+
+      <!-- 新增的 JavaScript 脚本 -->
+      <script>
+        document.getElementById('cookie-form').addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const cookieText = document.getElementById('cookie-text').value;
+            const statusDiv = document.getElementById('status-message');
+
+            if (!cookieText) {
+                statusDiv.textContent = '错误：Cookie 内容不能为空！';
+                statusDiv.style.color = 'red';
+                return;
+            }
+
+            statusDiv.textContent = '正在设置 Cookie，请稍候...';
+            statusDiv.style.color = 'blue';
+
+            try {
+                const response = await fetch('/set-cookie', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: 'cookies=' + encodeURIComponent(cookieText)
+                });
+
+                if (response.ok) {
+                    const result = await response.text();
+                    statusDiv.textContent = result;
+                    statusDiv.style.color = 'green';
+                    // 3秒后自动跳转到首页
+                    setTimeout(() => {
+                        window.location.href = '/';
+                    }, 3000);
+                } else {
+                    statusDiv.textContent = '设置 Cookie 失败，请检查格式或重试。';
+                    statusDiv.style.color = 'red';
+                }
+            } catch (error) {
+                statusDiv.textContent = '网络错误，请重试。';
+                statusDiv.style.color = 'red';
+                console.error('Error:', error);
+            }
+        });
+      </script>
     </body>
     </html>
   `;
 }
-
 
 // 处理响应内容重写
 async function rewriteResponse(response, request, contentLength = null) {
@@ -404,6 +492,41 @@ async function rewriteResponseHeaders(response, request, host) {
 // 主处理逻辑
 async function handleRequest(request) {
     const url = new URL(request.url);
+    // 处理设置 Cookie 的请求
+    if (url.pathname === '/set-cookie' && request.method === 'POST') {
+        try {
+            const formData = await request.formData();
+            const cookieString = formData.get('cookies');
+
+            if (!cookieString) {
+                return new Response('Cookie content is missing.', { status: 400 });
+            }
+
+            // 解析 Cookie 字符串
+            const cookies = cookieString.split(';').map(c => c.trim());
+            const responseHeaders = new Headers();
+            responseHeaders.set('Content-Type', 'text/plain; charset=UTF-8');
+
+            for (const cookie of cookies) {
+                if (!cookie) continue;
+                const [name, ...valueParts] = cookie.split('=');
+                if (name && valueParts.length > 0) {
+                    const value = valueParts.join('=');
+                    // 设置 Cookie，Path=/; Secure; SameSite=None 对于跨域代理很重要
+                    responseHeaders.append('Set-Cookie', `${name.trim()}=${value.trim()}; Path=/; Secure; SameSite=None`);
+                }
+            }
+
+            return new Response('Cookie 设置成功！即将跳转至首页...', {
+                status: 200,
+                headers: responseHeaders
+            });
+        } catch (error) {
+            console.error('Failed to set cookies:', error);
+            return new Response('服务器处理 Cookie 时出错。', { status: 500 });
+        }
+    }
+    // ====== 修改部分 2 结束 ======
 
     // 处理特殊路径 /login 和 /join
     if (url.pathname === '/login' || url.pathname === '/join') {
