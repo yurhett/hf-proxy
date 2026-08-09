@@ -3,6 +3,8 @@
 **部署在 Cloudflare Workers 的 Huggingface 代理**，专为中国用户量身定制。🌐🚀
 ---
 ## 更新日志
+- **2026-07-22**
+  - 兼容 Hugging Face 新版区域 LFS CDN 域名（如 `us.aws.cdn.hf.co`）。
 - **2025-10-17**
   - **实现网页端一键登录功能。**
   - 将登录页面从静态提示升级为交互式表单，用户可直接在代理站粘贴 Cookie。

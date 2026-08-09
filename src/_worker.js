@@ -1,7 +1,6 @@
 "use strict";
 
 const target = 'https://huggingface.co';
-const cdn_target = 'https://cdn-lfs';
 const xet_cas_bridge_target = 'https://cas-bridge.xethub.hf.co';
 const xet_cas_server_target = 'https://cas-server.xethub.hf.co';
 const xet_transfer_target = 'https://transfer.xethub.hf.co';
@@ -9,7 +8,124 @@ const lfs_endpoint = '/hf-cdn-lfs';
 const xet_cas_bridge_endpoint = '/hf-cas-bridge';
 const xet_cas_server_endpoint = '/hf-cas-server';
 const xet_transfer_endpoint = '/hf-xet-transfer';
+const xet_storage_endpoint = '/hf-xet-storage';
 const proxy_endpoint = '/proxy';
+
+const upstreamProxyRoutes = new Map([
+    [xet_cas_bridge_target, xet_cas_bridge_endpoint],
+    [xet_cas_server_target, xet_cas_server_endpoint],
+    [xet_transfer_target, xet_transfer_endpoint],
+]);
+
+function getProxyOrigin(request) {
+    return new URL(request.url).origin;
+}
+
+function isXetStorageUrl(url) {
+    const hostname = url.hostname.toLowerCase().replace(/\.$/, '');
+    const pathStyleHostname = hostname === 's3.amazonaws.com' ||
+        /^s3[.-](?:dualstack[.-])?[a-z0-9-]+\.amazonaws\.com$/.test(hostname);
+    const virtualHostedHostname = hostname === 'xethub-xorb-bucket.s3.amazonaws.com' ||
+        /^xethub-xorb-bucket\.s3[.-](?:dualstack[.-])?[a-z0-9-]+\.amazonaws\.com$/.test(hostname);
+
+    // Xet CAS 的 reconstruction API 有时直接返回 path-style S3 预签名地址，
+    // 当前已观察到的 bucket 固定为 xethub-xorb-bucket。
+    return (pathStyleHostname && url.pathname.startsWith('/xethub-xorb-bucket/xorbs/')) ||
+        (virtualHostedHostname && url.pathname.startsWith('/xorbs/'));
+}
+
+// 将 Hugging Face/Xet 返回的绝对 URL 注入当前代理入口。
+// 使用 request.url 的 origin，既支持线上 HTTPS，也支持 wrangler 本地 HTTP 调试。
+function rewriteUpstreamUrl(value, proxyOrigin) {
+    if (typeof value !== 'string') return value;
+
+    let parsedUrl;
+    try {
+        parsedUrl = new URL(value);
+    } catch (error) {
+        return value;
+    }
+
+    if (parsedUrl.origin === target) {
+        return `${proxyOrigin}${parsedUrl.pathname}${parsedUrl.search}${parsedUrl.hash}`;
+    }
+
+    for (const [upstreamOrigin, proxyPath] of upstreamProxyRoutes) {
+        if (parsedUrl.origin === upstreamOrigin) {
+            // CAS base endpoint 的根路径必须去掉尾斜杠，否则旧 hf_xet 会再拼出
+            // `/hf-cas-server//reconstruction/...` 并收到 404。
+            const upstreamPath = parsedUrl.pathname === '/' ? '' : parsedUrl.pathname;
+            return `${proxyOrigin}${proxyPath}${upstreamPath}${parsedUrl.search}${parsedUrl.hash}`;
+        }
+    }
+
+    if (parsedUrl.protocol === 'https:' && isXetStorageUrl(parsedUrl)) {
+        return `${proxyOrigin}${xet_storage_endpoint}/${parsedUrl.hostname}` +
+            `${parsedUrl.pathname}${parsedUrl.search}${parsedUrl.hash}`;
+    }
+
+    if (parsedUrl.protocol === 'https:' && isLfsCdnHostname(parsedUrl.hostname)) {
+        return `${proxyOrigin}${lfs_endpoint}/${parsedUrl.hostname}` +
+            `${parsedUrl.pathname}${parsedUrl.search}${parsedUrl.hash}`;
+    }
+
+    return value;
+}
+
+function rewriteXetEndpoint(value, proxyOrigin) {
+    const rewritten = rewriteUpstreamUrl(value, proxyOrigin);
+    try {
+        const parsedUrl = new URL(rewritten);
+        const normalizedPath = parsedUrl.pathname.replace(/\/+$/, '');
+        return `${parsedUrl.origin}${normalizedPath}${parsedUrl.search}${parsedUrl.hash}`;
+    } catch (error) {
+        return rewritten;
+    }
+}
+
+function isJsonContentType(contentType) {
+    return typeof contentType === 'string' &&
+        (contentType.toLowerCase().includes('/json') || contentType.toLowerCase().includes('+json'));
+}
+
+function headersForRewrittenBody(headers) {
+    const modifiedHeaders = new Headers(headers);
+
+    // fetch 可能已经解压响应体；内容改写后这些实体头也不再有效。
+    modifiedHeaders.delete('Content-Length');
+    modifiedHeaders.delete('Content-Encoding');
+    modifiedHeaders.delete('ETag');
+    modifiedHeaders.delete('Content-MD5');
+    return modifiedHeaders;
+}
+
+function rewriteJsonUrls(value, proxyOrigin) {
+    if (typeof value === 'string') {
+        return rewriteUpstreamUrl(value, proxyOrigin);
+    }
+
+    if (Array.isArray(value)) {
+        return value.map(item => rewriteJsonUrls(item, proxyOrigin));
+    }
+
+    if (value && typeof value === 'object') {
+        for (const key of Object.keys(value)) {
+            value[key] = rewriteJsonUrls(value[key], proxyOrigin);
+        }
+    }
+
+    return value;
+}
+
+// Hugging Face 的 LFS CDN 既有 cdn-lfs-*.hf.co 等旧域名，
+// 也有 us.aws.cdn.hf.co 等新版区域域名。
+function isLfsCdnHostname(hostname) {
+    const normalizedHostname = hostname.toLowerCase().replace(/\.$/, '');
+
+    return normalizedHostname === 'cdn.hf.co' ||
+        normalizedHostname.endsWith('.cdn.hf.co') ||
+        /^cdn-lfs(?:-[a-z0-9-]+)?\.(?:hf\.co|huggingface\.co)$/.test(normalizedHostname);
+}
 
 
 // 生成 HTML 页面
@@ -185,6 +301,7 @@ function generateCookieLoginPage() {
 async function rewriteResponse(response, request, contentLength = null) {
     const contentType = response.headers.get('content-type');
     const url = new URL(request.url);
+    const proxyOrigin = getProxyOrigin(request);
 
     if (request.url.includes('/resolve/')){
         return response;
@@ -192,22 +309,24 @@ async function rewriteResponse(response, request, contentLength = null) {
 
     // 检查是否是 XET token API 请求
     if (url.pathname.includes('/api/models/') && url.pathname.includes('/xet-read-token/')) {
-        if (contentType && contentType.includes('application/json')) {
+        if (isJsonContentType(contentType)) {
             try {
                 // 克隆响应并获取 JSON
                 const jsonData = await response.clone().json();
 
                 // 如果 JSON 中包含 casUrl 字段，则替换其值
-                if (jsonData && jsonData.casUrl && jsonData.casUrl.includes('cas-server.xethub.hf.co')) {
-                    const host = request.headers.get('host');
-                    jsonData.casUrl = `https://${host}${xet_cas_server_endpoint}`;
+                if (jsonData && jsonData.casUrl) {
+                    jsonData.casUrl = rewriteXetEndpoint(jsonData.casUrl, proxyOrigin);
 
                     // 创建新的响应，保留原始响应的头部信息
-                    const modifiedHeaders = new Headers(response.headers);
+                    const modifiedHeaders = headersForRewrittenBody(response.headers);
 
                     // 同时更新 x-xet-cas-url 头部（如果存在）
                     if (modifiedHeaders.has('x-xet-cas-url')) {
-                        modifiedHeaders.set('x-xet-cas-url', `https://${host}${xet_cas_server_endpoint}`);
+                        modifiedHeaders.set(
+                            'x-xet-cas-url',
+                            rewriteXetEndpoint(modifiedHeaders.get('x-xet-cas-url'), proxyOrigin)
+                        );
                     }
 
                     return new Response(JSON.stringify(jsonData), {
@@ -223,44 +342,15 @@ async function rewriteResponse(response, request, contentLength = null) {
     }
 
     // 处理XET CAS Server的JSON响应，替换transfer.xethub.hf.co URLs
-    if (contentType && contentType.includes('application/json') &&
+    if (isJsonContentType(contentType) &&
         (url.pathname.includes('/hf-cas-server/') || url.pathname.startsWith(xet_cas_server_endpoint))) {
         try {
-            const jsonData = await response.clone().json();
-            const host = request.headers.get('host');
-
-            // 递归函数来处理JSON对象中的所有URL
-            function processJsonUrls(obj) {
-                if (!obj || typeof obj !== 'object') return;
-
-                // 对象是数组
-                if (Array.isArray(obj)) {
-                    for (let i = 0; i < obj.length; i++) {
-                        processJsonUrls(obj[i]);
-                    }
-                    return;
-                }
-
-                // 对象是普通对象
-                for (const key in obj) {
-                    if (key === 'url' && typeof obj[key] === 'string' && obj[key].includes('transfer.xethub.hf.co')) {
-                        // 替换transfer.xethub.hf.co URLs
-                        const originalUrl = obj[key];
-                        const transferPath = originalUrl.slice('https://transfer.xethub.hf.co'.length);
-                        obj[key] = `https://${host}${xet_transfer_endpoint}${transferPath}`;
-                    } else if (obj[key] && typeof obj[key] === 'object') {
-                        // 递归处理嵌套对象
-                        processJsonUrls(obj[key]);
-                    }
-                }
-            }
-
-            processJsonUrls(jsonData);
+            const jsonData = rewriteJsonUrls(await response.clone().json(), proxyOrigin);
 
             return new Response(JSON.stringify(jsonData), {
                 status: response.status,
                 statusText: response.statusText,
-                headers: response.headers
+                headers: headersForRewrittenBody(response.headers)
             });
         } catch (error) {
             console.error('Error processing XET CAS Server JSON response:', error);
@@ -269,18 +359,16 @@ async function rewriteResponse(response, request, contentLength = null) {
 
     if (contentType && (contentType.includes('text/javascript') || contentType.includes('text/html') || contentType.includes('application/json'))) {
         let text = await response.text();
-        const domain = new URL(request.url).hostname;
-
         // 替换 Hugging Face 的域名为代理域名
-        text = text.replace(/https:\/\/huggingface\.co/g, `https://${domain}`);
+        text = text.replace(/https:\/\/huggingface\.co/g, proxyOrigin);
 
         // 替换 transfer.xethub.hf.co
         text = text.replace(/https:\/\/transfer\.xethub\.hf\.co/g,
-            `https://${domain}${xet_transfer_endpoint}`);
+            `${proxyOrigin}${xet_transfer_endpoint}`);
 
         // 替换 hf.space 域名
         text = text.replace(/https:\/\/([a-zA-Z0-9-]+\.hf\.space)/g, (match, spaceDomain) => {
-            return `https://${domain}${proxy_endpoint}/${spaceDomain}`;
+            return `${proxyOrigin}${proxy_endpoint}/${spaceDomain}`;
         });
 
         // 处理所有子域名 - 简化版本，不考虑路径
@@ -288,7 +376,7 @@ async function rewriteResponse(response, request, contentLength = null) {
             // 检查是否为目标二级域名
             if (subdomain !== 'www' && subdomain !== '') {
                 // 使用新的路径格式代替URL编码
-                return `https://${domain}${proxy_endpoint}/${subdomain}.huggingface.co`;
+                return `${proxyOrigin}${proxy_endpoint}/${subdomain}.huggingface.co`;
             }
             return match;
         });
@@ -297,7 +385,7 @@ async function rewriteResponse(response, request, contentLength = null) {
         return new Response(text, {
             status: response.status,
             statusText: response.statusText,
-            headers: response.headers
+            headers: headersForRewrittenBody(response.headers)
         });
     }
 
@@ -310,9 +398,9 @@ async function proxyRequest(request, targetUrl) {
     const isHeadRequest = request.method === 'HEAD';
 
     // 检查客户端是否请求了 identity 编码
-    const clientWantsIdentity = request.cf &&
-        request.cf.clientAcceptEncoding &&
-        request.cf.clientAcceptEncoding.includes('identity');
+    const clientAcceptEncoding = request.headers.get('Accept-Encoding') ||
+        (request.cf && request.cf.clientAcceptEncoding) || '';
+    const clientWantsIdentity = clientAcceptEncoding.includes('identity');
     // 如果客户端请求了 identity 编码，无论是 HEAD 还是 GET 请求，我们都需要特殊处理
     if (clientWantsIdentity) {
         if (isHeadRequest) {
@@ -359,8 +447,7 @@ async function proxyRequest(request, targetUrl) {
                 headers: modifiedHeaders
             });
             // 重写响应头中的 URL
-            const host = request.headers.get('host');
-            const modifiedResponse = await rewriteResponseHeaders(finalResponse, request, host);
+            const modifiedResponse = await rewriteResponseHeaders(finalResponse, request);
             return modifiedResponse;
         } else {
             const getRequest = new Request(targetUrl, {
@@ -379,53 +466,51 @@ async function proxyRequest(request, targetUrl) {
                 statusText: getResponse.statusText,
                 headers: modifiedHeaders
             });
-            const host = request.headers.get('host');
-            const modifiedResponse = await rewriteResponseHeaders(fixedLengthResponse, request, host);
+            const modifiedResponse = await rewriteResponseHeaders(fixedLengthResponse, request);
             return await rewriteResponse(modifiedResponse, request, contentLength);
         }
     }
 
     // 常规请求处理（非 identity 编码）
-    const proxyRequest = new Request(targetUrl, request);
-    proxyRequest.headers.set('Host', new URL(targetUrl).hostname);
-    proxyRequest.headers.set('Referer', new URL(targetUrl).origin);
-    proxyRequest.headers.delete('Accept-Encoding');
+    let upstreamRequest = new Request(targetUrl, request);
+    upstreamRequest = new Request(upstreamRequest, { redirect: 'manual' });
+    upstreamRequest.headers.set('Host', new URL(targetUrl).hostname);
+    upstreamRequest.headers.set('Referer', new URL(targetUrl).origin);
+    upstreamRequest.headers.delete('Accept-Encoding');
 
-    let response = await fetch(proxyRequest);
+    let response = await fetch(upstreamRequest);
 
     // 处理响应头
-    const host = request.headers.get('host');
-    response = await rewriteResponseHeaders(response, request, host);
+    response = await rewriteResponseHeaders(response, request);
 
     // 重写响应内容
     return await rewriteResponse(response, request);
 }
 
 // 处理响应头
-async function rewriteResponseHeaders(response, request, host) {
+async function rewriteResponseHeaders(response, request) {
     // 创建新的 Headers 对象，这样我们可以修改多个 header
     const modifiedHeaders = new Headers(response.headers);
+    const proxyOrigin = getProxyOrigin(request);
 
     // 处理重定向响应，将 Location 重写为新的路径格式
-    if (response.status === 302) {
+    if (response.status >= 300 && response.status < 400) {
         const location = response.headers.get('Location');
         if (location) {
-            if (location.startsWith(cdn_target)) {
-                // LFS URL处理
-                const fullPath = location.slice('https://'.length);
-                const newLocation = `https://${host}${lfs_endpoint}/${fullPath}`;
+            let locationUrl = null;
+            try {
+                locationUrl = new URL(location);
+            } catch (error) {
+                // 非绝对 URL 交给客户端按原样处理
+            }
+
+            if (locationUrl && locationUrl.protocol === 'https:' && isLfsCdnHostname(locationUrl.hostname)) {
+                // 将新旧 LFS CDN URL 都改写到统一的代理入口。
+                const fullPath = `${locationUrl.hostname}${locationUrl.pathname}${locationUrl.search}${locationUrl.hash}`;
+                const newLocation = `${proxyOrigin}${lfs_endpoint}/${fullPath}`;
                 modifiedHeaders.set('Location', newLocation);
-            } else if (location.startsWith(xet_cas_bridge_target)) {
-                // XET URL处理
-                // 将完整的xet URL编码并通过xet_endpoint代理
-                const xetPath = location.slice(xet_cas_bridge_target.length);
-                const newLocation = `https://${host}${xet_cas_bridge_endpoint}${xetPath}`;
-                modifiedHeaders.set('Location', newLocation);
-            } else if (location.startsWith(xet_transfer_target)) {
-                // XET Transfer URL处理
-                const xetTransferPath = location.slice(xet_transfer_target.length);
-                const newLocation = `https://${host}${xet_transfer_endpoint}${xetTransferPath}`;
-                modifiedHeaders.set('Location', newLocation);
+            } else {
+                modifiedHeaders.set('Location', rewriteUpstreamUrl(location, proxyOrigin));
             }
         }
     }
@@ -433,9 +518,13 @@ async function rewriteResponseHeaders(response, request, host) {
     // 处理 x-xet-cas-url 头部
     if (modifiedHeaders.has('x-xet-cas-url')) {
         const xetCasUrl = modifiedHeaders.get('x-xet-cas-url');
-        if (xetCasUrl === 'https://cas-server.xethub.hf.co') {
-            modifiedHeaders.set('x-xet-cas-url', `https://${host}${xet_cas_server_endpoint}`);
-        }
+        modifiedHeaders.set('x-xet-cas-url', rewriteXetEndpoint(xetCasUrl, proxyOrigin));
+    }
+
+    // 旧版客户端可能直接读取这个响应头，而不是 Link rel="xet-auth"。
+    if (modifiedHeaders.has('x-xet-refresh-route')) {
+        const refreshRoute = modifiedHeaders.get('x-xet-refresh-route');
+        modifiedHeaders.set('x-xet-refresh-route', rewriteUpstreamUrl(refreshRoute, proxyOrigin));
     }
 
     // 处理 Link 头部
@@ -452,23 +541,14 @@ async function rewriteResponseHeaders(response, request, host) {
                 // 根据 URL 模式进行转换
                 let newUrl = url;
 
-                if (url.startsWith('https://huggingface.co')) {
-                    // 处理 huggingface.co 链接
-                    newUrl = `https://${host}${url.slice('https://huggingface.co'.length)}`;
-                } else if (url.startsWith('https://cas-server.xethub.hf.co')) {
-                    // 处理 cas-server.xethub.hf.co 链接
-                    const xetServerPath = url.slice('https://cas-server.xethub.hf.co'.length);
-                    newUrl = `https://${host}${xet_cas_server_endpoint}${xetServerPath}`;
-                } else if (url.startsWith('https://transfer.xethub.hf.co')) {
-                    // 处理 transfer.xethub.hf.co 链接
-                    const xetTransferPath = url.slice('https://transfer.xethub.hf.co'.length);
-                    newUrl = `https://${host}${xet_transfer_endpoint}${xetTransferPath}`;
-                } else if (url.match(/https:\/\/[a-zA-Z0-9-]+\.hf\.space/)) {
+                newUrl = rewriteUpstreamUrl(url, proxyOrigin);
+
+                if (newUrl === url && url.match(/https:\/\/[a-zA-Z0-9-]+\.hf\.space/)) {
                     // 处理 hf.space 链接
                     const match = url.match(/https:\/\/([a-zA-Z0-9-]+\.hf\.space)(.*)/);
                     if (match) {
                         const [_, spaceDomain, spacePath] = match;
-                        newUrl = `https://${host}${proxy_endpoint}/${spaceDomain}${spacePath}`;
+                        newUrl = `${proxyOrigin}${proxy_endpoint}/${spaceDomain}${spacePath}`;
                     }
                 }
 
@@ -568,7 +648,7 @@ async function handleRequest(request) {
     }
 
     // 处理LFS请求
-    if (url.pathname.startsWith(lfs_endpoint)) {
+    if (url.pathname.startsWith(`${lfs_endpoint}/`)) {
         const targetPath = url.pathname.slice(lfs_endpoint.length + 1); // 去掉 /hf-cdn-lfs/
         if (!targetPath) {
             return new Response('Missing target path in lfs request', { status: 400 });
@@ -580,8 +660,13 @@ async function handleRequest(request) {
             return new Response('Invalid target path in lfs request', { status: 400 });
         }
 
-        const subdomain = targetPath.slice(0, firstSlashIndex); // 提取 cdn-lfs-xxx 部分
+        const subdomain = targetPath.slice(0, firstSlashIndex); // 提取 CDN 域名
         const path = targetPath.slice(firstSlashIndex); // 提取路径部分
+
+        // 仅允许已知的 Hugging Face LFS CDN，避免该入口代理任意主机。
+        if (!isLfsCdnHostname(subdomain)) {
+            return new Response('Not Allowed', { status: 400 });
+        }
 
         // 拼接查询参数
         const query = url.search; // 保留原始查询参数
@@ -617,6 +702,25 @@ async function handleRequest(request) {
         return proxyRequest(request, targetUrl);
     }
 
+    // 处理 Xet CAS 返回的 S3 预签名 XORB 地址。路径和 query 必须原样保留，
+    // 否则 AWS Signature V4 校验会失败。
+    if (url.pathname.startsWith(`${xet_storage_endpoint}/`)) {
+        const targetPath = url.pathname.slice(xet_storage_endpoint.length + 1);
+        const firstSlashIndex = targetPath.indexOf('/');
+        if (firstSlashIndex === -1) {
+            return new Response('Invalid Xet storage path', { status: 400 });
+        }
+
+        const storageHostname = targetPath.slice(0, firstSlashIndex);
+        const storagePath = targetPath.slice(firstSlashIndex);
+        const targetUrl = new URL(`https://${storageHostname}${storagePath}${url.search}`);
+        if (!isXetStorageUrl(targetUrl)) {
+            return new Response('Not Allowed', { status: 400 });
+        }
+
+        return proxyRequest(request, targetUrl.toString());
+    }
+
     // 代理请求到目标地址
     const targetUrl = target + url.pathname + url.search;
     let response = await proxyRequest(request, targetUrl);
@@ -629,3 +733,15 @@ export default{
         return handleRequest(request)
     }
 }
+
+export {
+    handleRequest,
+    headersForRewrittenBody,
+    isLfsCdnHostname,
+    isXetStorageUrl,
+    rewriteJsonUrls,
+    rewriteResponse,
+    rewriteResponseHeaders,
+    rewriteUpstreamUrl,
+    rewriteXetEndpoint,
+};
