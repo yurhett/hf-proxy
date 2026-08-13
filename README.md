@@ -1,4 +1,5 @@
 
+
 # 🤗 hf-proxy
 **部署在 Cloudflare Workers 的 Huggingface 代理**，专为中国用户量身定制。🌐🚀
 ---
@@ -54,7 +55,7 @@
 2. 在 Cloudflare Pages 新建项目，将 `src` 文件夹作为代码上传源。
 3. 保存并部署 Pages。
 4. 绑定一个子域名（如 `hf.yourdomain.com`），按提示完成绑定。
-6. **设置环境变量**：
+5. **设置环境变量**：
    - 在需要使用 Huggingface 的环境中，添加如下配置：
      ```bash
      HF_ENDPOINT=https://你的域名
